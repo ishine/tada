@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from typing import Literal, Optional
 
 import torch
-from transformers import LlamaForCausalLM
+from transformers import AutoTokenizer, LlamaForCausalLM
 from transformers.cache_utils import Cache
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.modeling_outputs import CausalLMOutputWithPast as CausalLMOutputWithPastBase
@@ -177,8 +177,12 @@ class TadaForCausalLM(LlamaForCausalLM):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        self._encoder = Encoder.from_pretrained("HumeAI/tada-codec", subfolder="encoder")
-        self._decoder = Decoder.from_pretrained("HumeAI/tada-codec", subfolder="decoder")
+        # Forward kwargs (e.g. low_cpu_mem_usage) to sub-model loading
+        sub_kwargs = {k: v for k, v in kwargs.items() if k in ('low_cpu_mem_usage',)}
+        self._decoder = Decoder.from_pretrained("HumeAI/tada-codec", subfolder="decoder", **sub_kwargs)
+        # Load tokenizer directly instead of the full Encoder (~1.3GB savings)
+        tokenizer_name = getattr(self.config, "tokenizer_name", "meta-llama/Llama-3.2-1B")
+        self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         return self
 
     @property
@@ -1174,6 +1178,9 @@ class TadaForCausalLM(LlamaForCausalLM):
         )
 
         encoded_expanded = torch.cat(encoded_expanded, dim=0).unsqueeze(0)
+        # Cast to decoder dtype (decoder may be fp32 while LLM is bf16)
+        decoder_dtype = next(self.decoder.parameters()).dtype
+        encoded_expanded = encoded_expanded.to(decoder_dtype)
         return self.decoder.generate(
             encoded_expanded,
             token_masks=(torch.norm(encoded_expanded, dim=-1) != 0).long(),
@@ -1306,6 +1313,8 @@ class TadaForCausalLM(LlamaForCausalLM):
 
     @property
     def tokenizer(self):
+        if hasattr(self, "_tokenizer"):
+            return self._tokenizer
         return self.encoder.tokenizer
 
     @property

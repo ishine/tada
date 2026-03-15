@@ -586,6 +586,17 @@ class EncoderOutput:
     logits: torch.Tensor | None = None
     text_emb_reduced: torch.Tensor | None = None
 
+    def save(self, path: str):
+        """Save EncoderOutput to disk for reuse without encoder."""
+        state = {f: getattr(self, f) for f in self.__dataclass_fields__}
+        torch.save(state, path)
+
+    @classmethod
+    def load(cls, path: str, device: str = "cpu") -> "EncoderOutput":
+        """Load cached EncoderOutput from disk."""
+        state = torch.load(path, map_location=device, weights_only=False)
+        return cls(**state)
+
     @classmethod
     def empty(cls, device: torch.device, token_dim: int = 512) -> "EncoderOutput":
         return cls(
@@ -631,8 +642,8 @@ class Encoder(PreTrainedModel):
         return self.aligner.tokenizer
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, subfolder: str = "encoder", language: str | None = None):
-        self = super().from_pretrained(pretrained_model_name_or_path, subfolder=subfolder)
+    def from_pretrained(cls, pretrained_model_name_or_path: str, subfolder: str = "encoder", language: str | None = None, **kwargs):
+        self = super().from_pretrained(pretrained_model_name_or_path, subfolder=subfolder, **kwargs)
         aligner_subfolder = f"aligner-{language}" if language else "aligner"
         self._aligner = Aligner.from_pretrained(pretrained_model_name_or_path, subfolder=aligner_subfolder)
         return self
