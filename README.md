@@ -1,5 +1,5 @@
 <!-- ---
-license: mit
+license: llama3.2
 language:
   - en
 tags:
@@ -207,6 +207,25 @@ If you use this project in your research, please cite our paper:
 }
 ```
 
+## License
+
+This repository contains both model weights and code, which are licensed separately:
+
+- **Model weights** are licensed under the Llama 3.2 Community License Agreement  
+- **Code** in this repository is licensed under the MIT License  
+
+You must comply with the terms of the Llama 3.2 license when using the models.
+
+See:
+- `LICENSE` for the Llama 3.2 license
+- `LICENSE_CODE` for the MIT license
+
 ## Contact
 
 [Hume AI](https://hume.ai) is an empathic AI research company. We research the datasets, tools, and models needed to give empathy to AI models to serve human wellbeing. If you're interested in any of our product or research collaborations, please reach out to us at hello@hume.ai.
+
+## Acknowledgements
+
+This project is built using Llama 3.2.
+
+Llama 3.2 is licensed under the Llama 3.2 Community License.
