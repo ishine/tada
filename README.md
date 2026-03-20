@@ -1,5 +1,5 @@
 <!-- ---
-license: mit
+license: llama3.2
 language:
   - en
 tags:
@@ -26,6 +26,15 @@ tags:
 ---
 
 TADA achieves high-fidelity synthesis and generation with a fraction of the computational overhead required by traditional models. By leveraging a novel tokenizer and architectural design, each autoregressive step covers one text token, dynamically determining its duration and prosody — eliminating fixed frame rates and transcript hallucination.
+
+## Updates
+
+**March 2026**
+- Encoder no longer loaded inside `TadaForCausalLM` — saves ~2.5 GB VRAM. Load it separately only when encoding new prompts.
+- Added `EncoderOutput.save()` / `EncoderOutput.load()` for prompt caching — encode once, reuse without the encoder.
+- Default flow matching steps reduced from 20 to 10 (no perceptible quality loss, ~1.3x faster).
+- bf16 inference support via `torch_dtype=torch.bfloat16` — halves model memory (~9 GB for 3B).
+- `model.compile()` for torch.compile optimization — ~0.12x RTF on H100 with cached prompts.
 
 ## Key Features
 
@@ -61,6 +70,12 @@ Most TTS models require a fixed number of steps to produce one second of audio (
   </tr>
 </table>
 
+## Prerequisites
+
+TADA models are built on [Meta Llama 3.2](https://huggingface.co/meta-llama). You must request access to the Llama models before using TADA:
+
+- Visit [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) or [meta-llama/Llama-3.2-3B](https://huggingface.co/meta-llama/Llama-3.2-3B) and accept the license agreement
+
 ## Installation
 
 ```bash
@@ -92,12 +107,14 @@ All models use the same encoder ([`HumeAI/tada-codec`](https://huggingface.co/Hu
 import torch
 import torchaudio
 
-from tada.modules.encoder import Encoder
+from tada.modules.encoder import Encoder, EncoderOutput
 from tada.modules.tada import TadaForCausalLM
 
 device = "cuda"
+
+# Encoder is loaded separately (not inside the model)
 encoder = Encoder.from_pretrained("HumeAI/tada-codec", subfolder="encoder").to(device)
-model = TadaForCausalLM.from_pretrained("HumeAI/tada-3b-ml").to(device)
+model = TadaForCausalLM.from_pretrained("HumeAI/tada-3b-ml", torch_dtype=torch.bfloat16).to(device)
 
 audio, sample_rate = torchaudio.load("samples/ljspeech.wav")
 audio = audio.to(device)
@@ -105,6 +122,10 @@ prompt_text = "The examination and testimony of the experts, enabled the commiss
 prompt = encoder(
     audio, text=[prompt_text], sample_rate=sample_rate
 )
+
+# Optional: save prompt to skip encoder on future runs
+# prompt.save("prompt_cache.pt")
+# prompt = EncoderOutput.load("prompt_cache.pt", device=device)
 
 output = model.generate(
     prompt=prompt,
@@ -125,7 +146,7 @@ from tada.modules.tada import TadaForCausalLM
 
 device = "cuda"
 encoder = Encoder.from_pretrained("HumeAI/tada-codec", subfolder="encoder", language="ja").to(device)
-model = TadaForCausalLM.from_pretrained("HumeAI/tada-3b-ml").to(device)
+model = TadaForCausalLM.from_pretrained("HumeAI/tada-3b-ml", torch_dtype=torch.bfloat16).to(device)
 
 # Load a reference audio clip in the target language
 audio, sample_rate = torchaudio.load("samples/ja_prompt.wav")
@@ -145,6 +166,22 @@ output = model.generate(
 Supported languages: `ar`, `ch`, `de`, `es`, `fr`, `it`, `ja`, `pl`, `pt`. When `language` is not specified, the default English aligner is used.
 
 > **Note:** For non-English prompts, you should provide the transcript of the reference audio via the `text` parameter. The encoder's built-in ASR is English-only. The generation will still work, but alignment quality will be degraded.
+
+You can inspect the prompt alignment to verify it looks correct:
+
+```python
+prompt.print_alignment(model.tokenizer)
+```
+
+This shows a dot-span visualization of the token-to-audio alignment — dots represent frame gaps, tokens appear at their aligned positions:
+
+```
+34 tokens | 10.50s audio
+······The··exam····ination··and·····test···imony··of···the
+```
+
+- If alignment looks wrong (tokens bunched together, missing tokens, nonsensical text), check that you provided the correct transcript.
+- This is especially important for non-English prompts where the built-in ASR cannot be used.
 
 ### Speech continuation
 
@@ -170,6 +207,25 @@ If you use this project in your research, please cite our paper:
 }
 ```
 
+## License
+
+This repository contains both model weights and code, which are licensed separately:
+
+- **Model weights** are licensed under the Llama 3.2 Community License Agreement  
+- **Code** in this repository is licensed under the MIT License  
+
+You must comply with the terms of the Llama 3.2 license when using the models.
+
+See:
+- `LICENSE` for the Llama 3.2 license
+- `LICENSE_CODE` for the MIT license
+
 ## Contact
 
 [Hume AI](https://hume.ai) is an empathic AI research company. We research the datasets, tools, and models needed to give empathy to AI models to serve human wellbeing. If you're interested in any of our product or research collaborations, please reach out to us at hello@hume.ai.
+
+## Acknowledgements
+
+This project is built using Llama 3.2.
+
+Llama 3.2 is licensed under the Llama 3.2 Community License.

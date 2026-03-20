@@ -586,6 +586,54 @@ class EncoderOutput:
     logits: torch.Tensor | None = None
     text_emb_reduced: torch.Tensor | None = None
 
+
+    def print_alignment(self, tokenizer) -> None:
+        """Print token-to-audio alignment for debugging prompt quality.
+
+        Args:
+            tokenizer: Any HuggingFace tokenizer (e.g. model.tokenizer or encoder.aligner.tokenizer)
+        """
+        if self.text_tokens is None or self.token_positions is None:
+            print("No alignment data available.")
+            return
+
+        n_tokens = int(self.text_tokens_len[0].item()) if self.text_tokens_len is not None else self.text_tokens.shape[1]
+        token_ids = self.text_tokens[0, :n_tokens].cpu().tolist()
+        positions = self.token_positions[0, :n_tokens].cpu().long().tolist()
+        audio_dur = self.audio.shape[-1] / self.sample_rate if self.audio.numel() > 0 else 0.0
+
+        # Decode tokens individually (handles multi-byte chars like CJK)
+        labels = []
+        for i in range(len(token_ids)):
+            prefix = tokenizer.decode(token_ids[:i], skip_special_tokens=True)
+            full = tokenizer.decode(token_ids[:i + 1], skip_special_tokens=True)
+            labels.append(full[len(prefix):])
+
+        # Print header
+        print(f"{n_tokens} tokens | {audio_dur:.2f}s audio")
+
+        # Dot-span visualization: dots for gaps, tokens at their positions
+        parts = []
+        prev_pos = 0
+        for pos, label in zip(positions, labels):
+            gap = max(0, pos - prev_pos)
+            if gap > 0:
+                parts.append("·" * gap)
+            parts.append(label if label.strip() else "_")
+            prev_pos = pos + 1
+        print("".join(parts))
+
+    def save(self, path: str):
+        """Save EncoderOutput to disk for reuse without encoder."""
+        state = {f: getattr(self, f) for f in self.__dataclass_fields__}
+        torch.save(state, path)
+
+    @classmethod
+    def load(cls, path: str, device: str = "cpu") -> "EncoderOutput":
+        """Load cached EncoderOutput from disk."""
+        state = torch.load(path, map_location=device, weights_only=False)
+        return cls(**state)
+
     @classmethod
     def empty(cls, device: torch.device, token_dim: int = 512) -> "EncoderOutput":
         return cls(
@@ -631,8 +679,8 @@ class Encoder(PreTrainedModel):
         return self.aligner.tokenizer
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str, subfolder: str = "encoder", language: str | None = None):
-        self = super().from_pretrained(pretrained_model_name_or_path, subfolder=subfolder)
+    def from_pretrained(cls, pretrained_model_name_or_path: str, subfolder: str = "encoder", language: str | None = None, **kwargs):
+        self = super().from_pretrained(pretrained_model_name_or_path, subfolder=subfolder, **kwargs)
         aligner_subfolder = f"aligner-{language}" if language else "aligner"
         self._aligner = Aligner.from_pretrained(pretrained_model_name_or_path, subfolder=aligner_subfolder)
         return self

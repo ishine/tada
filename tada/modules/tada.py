@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from typing import Literal, Optional
 
 import torch
-from transformers import LlamaForCausalLM
+from transformers import AutoTokenizer, LlamaForCausalLM
 from transformers.cache_utils import Cache
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.modeling_outputs import CausalLMOutputWithPast as CausalLMOutputWithPastBase
@@ -30,7 +30,7 @@ class InferenceOptions:
     duration_cfg_scale: float = 1.0
     cfg_schedule: Literal["constant", "linear", "cosine"] = "cosine"
     noise_temperature: float = 0.9
-    num_flow_matching_steps: int = 20
+    num_flow_matching_steps: int = 10
     time_schedule: Literal["uniform", "cosine", "logsnr"] = "logsnr"
     num_acoustic_candidates: int = 1
     scorer: Literal["spkr_verification", "likelihood", "duration_median"] = "likelihood"
@@ -177,8 +177,12 @@ class TadaForCausalLM(LlamaForCausalLM):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         self = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        self._encoder = Encoder.from_pretrained("HumeAI/tada-codec", subfolder="encoder")
-        self._decoder = Decoder.from_pretrained("HumeAI/tada-codec", subfolder="decoder")
+        # Forward kwargs (e.g. low_cpu_mem_usage) to sub-model loading
+        sub_kwargs = {k: v for k, v in kwargs.items() if k in ('low_cpu_mem_usage',)}
+        self._decoder = Decoder.from_pretrained("HumeAI/tada-codec", subfolder="decoder", **sub_kwargs)
+        # Load tokenizer directly instead of the full Encoder (~1.3GB savings)
+        tokenizer_name = getattr(self.config, "tokenizer_name", "meta-llama/Llama-3.2-1B")
+        self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         return self
 
     @property
@@ -601,9 +605,9 @@ class TadaForCausalLM(LlamaForCausalLM):
                 acoustic_only_norm = (acoustic_only - self.config.acoustic_mean) / self.config.acoustic_std
 
                 with torch.no_grad():
-                    cand_spkr_emb = self.acoustic_spkr_verf(
-                        acoustic_only_norm.reshape(-1, self.config.acoustic_dim)
-                    ).view(num_candidates, batch_size, -1)  # [N, B, 192]
+                    sv_input = acoustic_only_norm.reshape(-1, self.config.acoustic_dim)
+                    sv_input = sv_input.to(next(self.acoustic_spkr_verf.parameters()).dtype)
+                    cand_spkr_emb = self.acoustic_spkr_verf(sv_input).view(num_candidates, batch_size, -1)  # [N, B, 192]
 
                 # Cosine similarity to mean prompt speaker embedding (global anchor)
                 scores = opts.spkr_verification_weight * torch.einsum("nbe,be->nb", cand_spkr_emb, ref_spkr_emb)
@@ -841,7 +845,9 @@ class TadaForCausalLM(LlamaForCausalLM):
             with torch.no_grad():
                 pf_norm_sv = (prompt_acoustic_features - self.config.acoustic_mean) / self.config.acoustic_std
                 B_sv, T_sv, D_sv = pf_norm_sv.shape
-                all_spkr_embs = self.acoustic_spkr_verf(pf_norm_sv.reshape(-1, D_sv)).view(B_sv, T_sv, -1)
+                # Cast to spkr_verf dtype (model may be bf16 while spkr_verf is fp32)
+                sv_dtype = next(self.acoustic_spkr_verf.parameters()).dtype
+                all_spkr_embs = self.acoustic_spkr_verf(pf_norm_sv.reshape(-1, D_sv).to(sv_dtype)).view(B_sv, T_sv, -1)
                 valid_mask_sv_exp = valid_mask_sv.unsqueeze(-1).float()  # [B, T, 1]
                 # Mean-pool speaker embeddings over valid frames, then re-normalize
                 ref_spkr_emb = (all_spkr_embs * valid_mask_sv_exp).sum(dim=1) / valid_mask_sv_exp.sum(dim=1).clamp(
@@ -1174,6 +1180,9 @@ class TadaForCausalLM(LlamaForCausalLM):
         )
 
         encoded_expanded = torch.cat(encoded_expanded, dim=0).unsqueeze(0)
+        # Cast to decoder dtype (decoder may be fp32 while LLM is bf16)
+        decoder_dtype = next(self.decoder.parameters()).dtype
+        encoded_expanded = encoded_expanded.to(decoder_dtype)
         return self.decoder.generate(
             encoded_expanded,
             token_masks=(torch.norm(encoded_expanded, dim=-1) != 0).long(),
@@ -1193,6 +1202,13 @@ class TadaForCausalLM(LlamaForCausalLM):
         normalize_text: bool = True,
         verbose: bool = False,
     ) -> GenerationOutput:
+        # Auto-cast prompt tensors to model dtype (e.g. fp32 prompt + bf16 model)
+        model_dtype = next(self.parameters()).dtype
+        for field in prompt.__dataclass_fields__:
+            v = getattr(prompt, field)
+            if isinstance(v, torch.Tensor) and v.is_floating_point() and v.dtype != model_dtype:
+                setattr(prompt, field, v.to(model_dtype))
+
         if isinstance(text, str):
             text = [text]
         text = [normalize_text_fn(t) if normalize_text else t for t in text]
@@ -1306,6 +1322,8 @@ class TadaForCausalLM(LlamaForCausalLM):
 
     @property
     def tokenizer(self):
+        if hasattr(self, "_tokenizer"):
+            return self._tokenizer
         return self.encoder.tokenizer
 
     @property
