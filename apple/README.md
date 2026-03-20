@@ -5,22 +5,30 @@ TADA speech synthesis on Apple Silicon via [MLX](https://github.com/ml-explore/m
 ## Setup
 
 ```bash
-pip install -e ".[convert]"
+cd apple
+uv venv
+uv pip install -e ".[convert]"
 ```
 
 For auto-transcription of reference audio (optional):
 ```bash
-pip install mlx-whisper
+uv pip install mlx-whisper
 ```
 
 ## Convert Weights
 
+Requires a [Hugging Face](https://huggingface.co/) account with access to `meta-llama/Llama-3.2-1B` (gated model). Login first:
+```bash
+huggingface-cli login
+```
+
+Then convert:
 ```bash
 # 3B model
-python -m mlx_tada.convert_3b ./mlx_weights
+uv run python -m mlx_tada.convert_3b ./mlx_weights
 
 # 1B model
-python -m mlx_tada.convert_1b ./mlx_weights
+uv run python -m mlx_tada.convert_1b ./mlx_weights
 ```
 
 ## Generate Speech
@@ -28,16 +36,16 @@ python -m mlx_tada.convert_1b ./mlx_weights
 ### CLI
 
 ```bash
-python -m mlx_tada.generate \
+uv run python -m mlx_tada.generate \
   --weights ./mlx_weights \
   --audio speaker.wav \
   --text "Hello world, today is a nice day." \
   --output output.wav
 ```
 
-With 4-bit quantization (10x faster):
+With 4-bit quantization (10x faster, 60% less memory):
 ```bash
-python -m mlx_tada.generate \
+uv run python -m mlx_tada.generate \
   --weights ./mlx_weights \
   --audio speaker.wav \
   --text "Hello world, today is a nice day." \
@@ -74,16 +82,27 @@ out = model.generate("Reusing the same voice.", ref)
 Save audio:
 ```python
 from mlx_tada import save_wav
+
 save_wav(out.audio, "output.wav")
 ```
 
 ## Debug Logging
 
 ```bash
-DEBUG=1 python -m mlx_tada.generate --weights ./mlx_weights --audio speaker.wav --text "Hello"
+DEBUG=1 uv run python -m mlx_tada.generate \
+  --weights ./mlx_weights \
+  --audio speaker.wav \
+  --text "Hello"
 ```
 
 ```python
-from mlx_tada.model import setup_logging
+from mlx_tada import setup_logging
+
 setup_logging()
+```
+
+## Running Tests
+
+```bash
+MLX_WEIGHTS=./mlx_weights uv run pytest tests/ -v
 ```
