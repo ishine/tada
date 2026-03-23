@@ -83,10 +83,6 @@ class InferenceOptions:
     noise_temperature: float = 0.9
     num_flow_matching_steps: int = 20
     time_schedule: Literal["uniform", "cosine", "logsnr"] = "logsnr"
-    num_acoustic_candidates: int = 1
-    scorer: Literal["spkr_verification", "likelihood", "duration_median"] = "likelihood"
-    negative_condition_source: Literal["negative_step_output", "prompt", "zero"] = "negative_step_output"
-    text_only_logit_scale: float = 0.0
 
 
 @dataclass
