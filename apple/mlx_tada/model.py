@@ -445,6 +445,7 @@ class TadaForCausalLM(nn.Module):
         prefill_len: int,
         cache: list[KVCache],
         opts: InferenceOptions,
+        num_extra_steps: int = 0,
     ) -> tuple[list[mx.array], list[mx.array], list[mx.array]]:
         shift = self.config.shift_acoustic
         pad_id = self.config.pad_token_id
@@ -472,7 +473,8 @@ class TadaForCausalLM(nn.Module):
         for i in range(n_pf):
             all_time_before.append(mx.expand_dims(tlb[:, i + 1], 1))
 
-        for step in range(prefill_len, input_ids.shape[1]):
+        max_steps = input_ids.shape[1] + num_extra_steps
+        for step in range(prefill_len, max_steps):
             t0 = time.time()
             input_slice = input_ids[:, step : step + 1]
             is_structural = (
@@ -596,6 +598,7 @@ class TadaForCausalLM(nn.Module):
         reference: Reference,
         inference_options: InferenceOptions | None = None,
         num_transition_steps: int = 5,
+        num_extra_steps: int = 0,
     ) -> GenerationOutput:
         """Generate speech audio from text, cloning the voice from a reference.
 
@@ -627,6 +630,7 @@ class TadaForCausalLM(nn.Module):
             prefill_len,
             cache,
             opts,
+            num_extra_steps=num_extra_steps,
         )
         wav = self._decode_output(all_acoustic, all_time_before, paf.shape[1], num_transition_steps)
         elapsed = time.time() - t_start
